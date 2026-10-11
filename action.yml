@@ -1,0 +1,26 @@
+name: bohr.io Cloud deploy
+description: Deploy a bohr.io Cloud managed project (a Worker with static assets) from GitHub Actions.
+author: bohr.io
+branding:
+  icon: upload-cloud
+  color: purple
+
+inputs:
+  instance-url:
+    description: Base URL of the bohr instance that manages the project.
+    required: false
+    default: https://app.bohr.io
+  working-directory:
+    description: Directory that holds the project's wrangler.jsonc (or wrangler.json), relative to the repository root.
+    required: false
+    default: .
+
+outputs:
+  url:
+    description: URL where the deployed branch is served.
+  deployment-id:
+    description: Identifier of the deployment on the bohr instance.
+
+runs:
+  using: node24
+  main: dist/index.js
