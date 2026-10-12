@@ -2,7 +2,7 @@
 
 Deploys a bohr.io Cloud managed project (a Cloudflare Worker, static assets, or both) from GitHub Actions. The project runs in bohr's Cloudflare account, so the workflow needs no Cloudflare token: the action signs in to bohr with the workflow's GitHub OIDC token.
 
-The action is a thin wrapper around the bohr CLI ([npm `bohr`](../../packages/cli/README.md)): every run executes the latest release, `npx --yes bohr@latest action`, with the npm of the Node.js that runs the action. The CLI reads the inputs below and sets the outputs, the environment of the next steps, the masks and the job summary itself. The same CLI deploys from a terminal or an AI agent (`npx bohr deploy`).
+The action is a thin wrapper around the bohr CLI ([npm `bohr`](../../packages/cli/README.md)): every run installs the latest release (`bohr@latest`) with the npm of the Node.js that runs the action, into the runner's temporary folder, and starts `bohr action` with that Node.js directly (not through npx, whose shell would drop the inputs: their names have hyphens). The CLI reads the inputs below and sets the outputs, the environment of the next steps, the masks and the job summary itself. The same CLI deploys from a terminal or an AI agent (`npx bohr deploy`).
 
 ## Usage
 
