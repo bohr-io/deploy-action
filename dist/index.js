@@ -23752,6 +23752,7 @@ async function readOptional(path) {
 // src/upload.ts
 import { readFile as readFile3 } from "node:fs/promises";
 var CLOUDFLARE_API = "https://api.cloudflare.com/client/v4";
+var USER_AGENT2 = "bohr-deploy-action (+https://bohr.io)";
 var BUCKET_CONCURRENCY = 3;
 var SINGLE_UPLOAD_CONCURRENCY = 50;
 var CloudflareApiError = class extends Error {
@@ -23808,7 +23809,11 @@ async function uploadAssets(options) {
         `${base}/${file.hash}`,
         {
           method: "POST",
-          headers: { Authorization: authorization, "Content-Type": file.contentType ?? NULL_CONTENT_TYPE },
+          headers: {
+            Authorization: authorization,
+            "Content-Type": file.contentType ?? NULL_CONTENT_TYPE,
+            "User-Agent": USER_AGENT2
+          },
           body: new Uint8Array(await readFile3(file.absolutePath))
         },
         retry
@@ -23825,7 +23830,7 @@ async function uploadAssets(options) {
       }
       response = await fetchWithRetry(
         `${base}?base64=true`,
-        { method: "POST", headers: { Authorization: authorization }, body: form },
+        { method: "POST", headers: { Authorization: authorization, "User-Agent": USER_AGENT2 }, body: form },
         retry
       );
     }

@@ -4,6 +4,7 @@ import { type Fetch, fetchWithRetry, type RetryOptions, type Sleep } from './htt
 import type { AssetFile } from './manifest';
 
 export const CLOUDFLARE_API = 'https://api.cloudflare.com/client/v4';
+const USER_AGENT = 'bohr-deploy-action (+https://bohr.io)';
 /** Buckets uploaded in parallel, as wrangler does. */
 export const BUCKET_CONCURRENCY = 3;
 /** Parallel single-file uploads when the token does not say otherwise (wrangler's default). */
@@ -101,7 +102,11 @@ export async function uploadAssets(options: UploadOptions): Promise<UploadResult
         `${base}/${file.hash}`,
         {
           method: 'POST',
-          headers: { Authorization: authorization, 'Content-Type': file.contentType ?? NULL_CONTENT_TYPE },
+          headers: {
+            Authorization: authorization,
+            'Content-Type': file.contentType ?? NULL_CONTENT_TYPE,
+            'User-Agent': USER_AGENT,
+          },
           body: new Uint8Array(await readFile(file.absolutePath)),
         },
         retry,
@@ -119,7 +124,7 @@ export async function uploadAssets(options: UploadOptions): Promise<UploadResult
       }
       response = await fetchWithRetry(
         `${base}?base64=true`,
-        { method: 'POST', headers: { Authorization: authorization }, body: form },
+        { method: 'POST', headers: { Authorization: authorization, 'User-Agent': USER_AGENT }, body: form },
         retry,
       );
     }
