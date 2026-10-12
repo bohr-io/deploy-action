@@ -218,7 +218,11 @@ export async function deploy(options: DeployOptions, deps: DeployDependencies): 
 }
 
 /** Caches the OIDC token and requests a fresh one when it is about to expire. */
-function oidcTokens(getIdToken: () => Promise<string>, logger: Logger, now: () => number): () => Promise<string> {
+export function oidcTokens(
+  getIdToken: () => Promise<string>,
+  logger: Logger,
+  now: () => number,
+): () => Promise<string> {
   let token: string | undefined;
   return async () => {
     if (token) {

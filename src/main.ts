@@ -1,13 +1,27 @@
 import { resolve } from 'node:path';
 import * as core from '@actions/core';
+import { credentials } from './credentials';
 import { type DeployResult, deploy, OIDC_AUDIENCE } from './deploy';
 import { formatBytes } from './log';
 
 const DEFAULT_INSTANCE_URL = 'https://app.bohr.io';
 
-/** Action entry point: reads inputs, deploys, sets outputs and the job summary. */
+/** Action entry point: reads inputs, deploys (or only gets the credentials), sets outputs and the job summary. */
 export async function run(): Promise<void> {
   try {
+    if (core.getInput('credentials').trim().toLowerCase() === 'true') {
+      await credentials(
+        { instanceUrl: core.getInput('instance-url') || DEFAULT_INSTANCE_URL },
+        {
+          fetch: globalThis.fetch,
+          getIdToken: () => core.getIDToken(OIDC_AUDIENCE),
+          logger: { info: core.info, warning: core.warning, setSecret: core.setSecret, group: core.group },
+          exportVariable: core.exportVariable,
+          setOutput: core.setOutput,
+        },
+      );
+      return;
+    }
     const result = await deploy(
       {
         workingDirectory: resolve(core.getInput('working-directory') || '.'),

@@ -162,6 +162,37 @@ export async function finalizeDeployment(
   return { deploymentId, script, url };
 }
 
+/** What POST /api/deploy/credentials answers for a project in its owner's Cloudflare account. */
+export interface DeployCredentials {
+  accountId: string;
+  apiToken: string;
+  /** The production branch's build variables, by name. */
+  buildVariables: Record<string, string>;
+}
+
+/** POST /api/deploy/credentials: the Cloudflare credentials and build variables of the production deploy. */
+export async function requestDeployCredentials(client: InstanceClient): Promise<DeployCredentials> {
+  const response = await fetchWithRetry(
+    `${client.instanceUrl}/api/deploy/credentials`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${client.token}`, 'User-Agent': USER_AGENT },
+    },
+    { fetch: client.fetch, sleep: client.sleep, onRetry: client.log },
+  );
+  const body = await readInstanceJson(response, 'give the deploy credentials', UNKNOWN_PROJECT_HINT);
+  const { accountId, apiToken, buildVariables } = body;
+  if (typeof accountId !== 'string' || accountId === '') throw malformed('accountId');
+  if (typeof apiToken !== 'string' || apiToken === '') throw malformed('apiToken');
+  if (
+    buildVariables !== undefined &&
+    !(isRecord(buildVariables) && Object.values(buildVariables).every((value) => typeof value === 'string'))
+  ) {
+    throw malformed('buildVariables');
+  }
+  return { accountId, apiToken, buildVariables: (buildVariables as Record<string, string> | undefined) ?? {} };
+}
+
 /** Parses a JSON object response, turning errors (JSON `{ error }` bodies) into actionable messages. */
 async function readInstanceJson(
   response: Response,

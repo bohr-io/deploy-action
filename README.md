@@ -31,12 +31,44 @@ To use the deployed URL in later steps:
       - run: echo "Deployed to ${{ steps.deploy.outputs.url }}"
 ```
 
+## Credentials mode (projects in your own Cloudflare account)
+
+A project that runs in its owner's Cloudflare account deploys with `wrangler deploy`, and the workflow bohr writes for it (`.github/workflows/bohr-deploy.yml`) gets the credentials from bohr at run time instead of keeping a Cloudflare token in the repository's secrets:
+
+```yaml
+permissions: { contents: read, id-token: write }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+      - name: bohr credentials
+        id: bohr-credentials
+        uses: bohr-io/deploy-action@v1
+        with:
+          credentials: "true"
+      - run: npm ci && npm run build   # sees the build variables
+      - run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ steps.bohr-credentials.outputs.cloudflare-api-token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.bohr-credentials.outputs.cloudflare-account-id }}
+```
+
+With `credentials: "true"` the action deploys nothing. It requests an OIDC token (audience `bohr.io`), calls `POST <instance-url>/api/deploy/credentials` with it, masks every value it gets back (`::add-mask::`, each build variable included) and then:
+
+- exports the project's build variables (set in the bohr panel, production branch) to the environment of the next steps (`$GITHUB_ENV`), so the install and build see them;
+- sets the Cloudflare token and account as the step's outputs `cloudflare-api-token` and `cloudflare-account-id`, so only the step that maps them (the deploy) gets them, not the install and build.
+
+bohr answers only runs of `.github/workflows/bohr-deploy.yml` on a `push` (or `workflow_dispatch`) to the project's production branch, for a project in its owner's Cloudflare account. It hands out the owner's own token (the user's or the organization's Cloudflare connection), never the token of bohr's account: projects bohr hosts are refused.
+
 ## Inputs
 
 | Input | Default | Description |
 | --- | --- | --- |
 | `instance-url` | `https://app.bohr.io` | Base URL of the bohr instance that manages the project. Must use https. |
 | `working-directory` | `.` | Folder that holds the project's `wrangler.jsonc`, relative to the repository root. |
+| `credentials` | `false` | `"true"`: only get the deploy credentials and build variables of a project in its owner's account (see above). |
 
 ## Outputs
 
@@ -44,6 +76,8 @@ To use the deployed URL in later steps:
 | --- | --- |
 | `url` | URL where the deployed branch is served. |
 | `deployment-id` | Identifier of the deployment on the bohr instance. |
+| `cloudflare-api-token` | Credentials mode: the Cloudflare API token to deploy with (masked). |
+| `cloudflare-account-id` | Credentials mode: the Cloudflare account to deploy to (masked). |
 
 The job summary shows the URL and how many asset files were found and uploaded.
 
@@ -109,6 +143,7 @@ New and changed files go straight to Cloudflare with an upload token that only a
 | --- | --- |
 | `Could not get a GitHub OIDC token` | Add `permissions: id-token: write` to the workflow or the job. Workflows triggered from forks never get OIDC tokens. |
 | `No bohr.io Cloud managed project matches this repository and branch` | Create or migrate the project in the bohr panel, and deploy on branch pushes (not tags or pull requests). |
+| `could not give the deploy credentials (HTTP 403)` | Credentials mode: the message says why. Only `bohr-deploy.yml` on a push to the production branch of a project in its owner's Cloudflare account gets them. |
 | `Found wrangler.toml, but this action reads wrangler.jsonc` | Convert the config to `wrangler.jsonc`. |
 | `... is not supported` | Remove the binding from the config; managed projects support static assets, vars and secrets. |
 | `The assets directory ... does not exist` | Run the build before the action, or fix `assets.directory`. |

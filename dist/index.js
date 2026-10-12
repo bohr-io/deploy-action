@@ -20352,6 +20352,15 @@ var ExitCode;
   ExitCode2[ExitCode2["Success"] = 0] = "Success";
   ExitCode2[ExitCode2["Failure"] = 1] = "Failure";
 })(ExitCode || (ExitCode = {}));
+function exportVariable(name, val) {
+  const convertedVal = toCommandValue(val);
+  process.env[name] = convertedVal;
+  const filePath = process.env["GITHUB_ENV"] || "";
+  if (filePath) {
+    return issueFileCommand("ENV", prepareKeyValueMessage(name, val));
+  }
+  issueCommand("set-env", { name }, convertedVal);
+}
 function setSecret(secret) {
   issueCommand("add-mask", {}, secret);
 }
@@ -21789,6 +21798,24 @@ async function finalizeDeployment(client, sessionId, metadata, modules) {
   if (typeof script !== "string") throw malformed("script");
   if (typeof url !== "string" || url === "") throw malformed("url");
   return { deploymentId, script, url };
+}
+async function requestDeployCredentials(client) {
+  const response = await fetchWithRetry(
+    `${client.instanceUrl}/api/deploy/credentials`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${client.token}`, "User-Agent": USER_AGENT }
+    },
+    { fetch: client.fetch, sleep: client.sleep, onRetry: client.log }
+  );
+  const body = await readInstanceJson(response, "give the deploy credentials", UNKNOWN_PROJECT_HINT);
+  const { accountId, apiToken, buildVariables } = body;
+  if (typeof accountId !== "string" || accountId === "") throw malformed("accountId");
+  if (typeof apiToken !== "string" || apiToken === "") throw malformed("apiToken");
+  if (buildVariables !== void 0 && !(isRecord2(buildVariables) && Object.values(buildVariables).every((value) => typeof value === "string"))) {
+    throw malformed("buildVariables");
+  }
+  return { accountId, apiToken, buildVariables: buildVariables ?? {} };
 }
 async function readInstanceJson(response, action, notFoundHint) {
   const text = await response.text();
@@ -24068,10 +24095,68 @@ function oidcTokens(getIdToken, logger, now) {
   };
 }
 
+// src/credentials.ts
+var RESERVED_NAME = /^(GITHUB_|RUNNER_|ACTIONS_|CLOUDFLARE_)|^CI$/;
+var VALID_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function mask(logger, value) {
+  if (value === "") return;
+  logger.setSecret(value);
+  if (!value.includes("\n")) return;
+  for (const line of value.split(/\r?\n/)) if (line.trim() !== "") logger.setSecret(line);
+}
+async function credentials(options, deps) {
+  const { logger } = deps;
+  const instanceUrl = normalizeInstanceUrl(options.instanceUrl);
+  const idToken = oidcTokens(deps.getIdToken, logger, deps.now ?? Date.now);
+  const result = await logger.group("Request the deploy credentials", async () => {
+    const token = await idToken();
+    const answer = await requestDeployCredentials({
+      instanceUrl,
+      token,
+      fetch: deps.fetch,
+      sleep: deps.sleep,
+      log: (message) => logger.info(message)
+    });
+    mask(logger, answer.apiToken);
+    mask(logger, answer.accountId);
+    for (const value of Object.values(answer.buildVariables)) mask(logger, value);
+    logger.info(`Got the Cloudflare credentials of account ${answer.accountId} from ${instanceUrl}.`);
+    return answer;
+  });
+  deps.setOutput("cloudflare-api-token", result.apiToken);
+  deps.setOutput("cloudflare-account-id", result.accountId);
+  const variables = [];
+  for (const [name, value] of Object.entries(result.buildVariables)) {
+    if (!VALID_NAME.test(name) || RESERVED_NAME.test(name)) {
+      logger.warning(`Skipped the build variable "${name.replace(/[^\w-]/g, "?")}": not a name the build can use.`);
+      continue;
+    }
+    deps.exportVariable(name, value);
+    variables.push(name);
+  }
+  logger.info(
+    variables.length === 0 ? "No build variables set in bohr." : `${plural(variables.length, "build variable")} for the next steps: ${variables.join(", ")}.`
+  );
+  return { accountId: result.accountId, variables };
+}
+
 // src/main.ts
 var DEFAULT_INSTANCE_URL = "https://app.bohr.io";
 async function run() {
   try {
+    if (getInput("credentials").trim().toLowerCase() === "true") {
+      await credentials(
+        { instanceUrl: getInput("instance-url") || DEFAULT_INSTANCE_URL },
+        {
+          fetch: globalThis.fetch,
+          getIdToken: () => getIDToken(OIDC_AUDIENCE),
+          logger: { info, warning, setSecret, group },
+          exportVariable,
+          setOutput
+        }
+      );
+      return;
+    }
     const result = await deploy(
       {
         workingDirectory: resolve2(getInput("working-directory") || "."),

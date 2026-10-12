@@ -14,12 +14,23 @@ inputs:
     description: Directory that holds the project's wrangler.jsonc (or wrangler.json), relative to the repository root.
     required: false
     default: .
+  credentials:
+    description: >-
+      "true" for a project in its owner's Cloudflare account: only get the production deploy's credentials from
+      bohr (build variables to the environment of the next steps, the Cloudflare token and account to this
+      step's outputs) and deploy nothing.
+    required: false
+    default: "false"
 
 outputs:
   url:
     description: URL where the deployed branch is served.
   deployment-id:
     description: Identifier of the deployment on the bohr instance.
+  cloudflare-api-token:
+    description: With credentials "true", the Cloudflare API token to deploy with (masked).
+  cloudflare-account-id:
+    description: With credentials "true", the Cloudflare account to deploy to (masked).
 
 runs:
   using: node24
