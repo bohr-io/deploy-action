@@ -1,11 +1,8 @@
 import { oidcTokens } from './deploy';
 import type { Fetch, Sleep } from './http';
 import { normalizeInstanceUrl, requestDeployCredentials } from './instance';
-import { type Logger, plural } from './log';
-
-/** Names a build variable cannot take: the runner's, GitHub's and the deploy credentials'. */
-const RESERVED_NAME = /^(GITHUB_|RUNNER_|ACTIONS_|CLOUDFLARE_)|^CI$/;
-const VALID_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+import type { Logger } from './log';
+import { exportBuildVariables, mask } from './variables';
 
 export interface CredentialsOptions {
   instanceUrl: string;
@@ -28,14 +25,6 @@ export interface CredentialsResult {
   accountId: string;
   /** Names of the build variables exported to the next steps. */
   variables: string[];
-}
-
-/** Masks a value in every later log line, each line of a multi-line value too. */
-function mask(logger: Logger, value: string): void {
-  if (value === '') return;
-  logger.setSecret(value);
-  if (!value.includes('\n')) return;
-  for (const line of value.split(/\r?\n/)) if (line.trim() !== '') logger.setSecret(line);
 }
 
 /**
@@ -73,19 +62,6 @@ export async function credentials(
   deps.setOutput('cloudflare-api-token', result.apiToken);
   deps.setOutput('cloudflare-account-id', result.accountId);
 
-  const variables: string[] = [];
-  for (const [name, value] of Object.entries(result.buildVariables)) {
-    if (!VALID_NAME.test(name) || RESERVED_NAME.test(name)) {
-      logger.warning(`Skipped the build variable "${name.replace(/[^\w-]/g, '?')}": not a name the build can use.`);
-      continue;
-    }
-    deps.exportVariable(name, value);
-    variables.push(name);
-  }
-  logger.info(
-    variables.length === 0
-      ? 'No build variables set in bohr.'
-      : `${plural(variables.length, 'build variable')} for the next steps: ${variables.join(', ')}.`,
-  );
+  const variables = exportBuildVariables(result.buildVariables, logger, deps.exportVariable);
   return { accountId: result.accountId, variables };
 }

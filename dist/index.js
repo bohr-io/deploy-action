@@ -20422,6 +20422,10 @@ function getIDToken(aud) {
   });
 }
 
+// src/build-plan.ts
+import { lstat as lstat2, mkdir as mkdir2, readFile as readFile4, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join4 } from "node:path";
+
 // src/deploy.ts
 import { readFileSync as readFileSync2 } from "node:fs";
 import { relative } from "node:path";
@@ -21812,10 +21816,42 @@ async function requestDeployCredentials(client) {
   const { accountId, apiToken, buildVariables } = body;
   if (typeof accountId !== "string" || accountId === "") throw malformed("accountId");
   if (typeof apiToken !== "string" || apiToken === "") throw malformed("apiToken");
-  if (buildVariables !== void 0 && !(isRecord2(buildVariables) && Object.values(buildVariables).every((value) => typeof value === "string"))) {
-    throw malformed("buildVariables");
-  }
+  if (buildVariables !== void 0 && !isStringRecord(buildVariables)) throw malformed("buildVariables");
   return { accountId, apiToken, buildVariables: buildVariables ?? {} };
+}
+async function requestBuildPlan(client) {
+  const response = await fetchWithRetry(
+    `${client.instanceUrl}/api/deploy/build-plan`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${client.token}`, "User-Agent": USER_AGENT }
+    },
+    { fetch: client.fetch, sleep: client.sleep, onRetry: client.log }
+  );
+  if (response.status === 404) {
+    await response.body?.cancel().catch(() => {
+    });
+    return null;
+  }
+  const body = await readInstanceJson(response, "give the build plan", UNKNOWN_PROJECT_HINT);
+  if (body.found === false) return null;
+  if (body.found !== true) throw malformed("found");
+  const { nodeVersion, install, build, files, buildVariables } = body;
+  if (typeof nodeVersion !== "string" || nodeVersion === "") throw malformed("nodeVersion");
+  if (install !== null && install !== void 0 && typeof install !== "string") throw malformed("install");
+  if (build !== null && build !== void 0 && typeof build !== "string") throw malformed("build");
+  if (files !== void 0 && !isStringRecord(files)) throw malformed("files");
+  if (buildVariables !== void 0 && !isStringRecord(buildVariables)) throw malformed("buildVariables");
+  return {
+    nodeVersion,
+    install: install || null,
+    build: build || null,
+    files: files ?? {},
+    buildVariables: buildVariables ?? {}
+  };
+}
+function isStringRecord(value) {
+  return isRecord2(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 async function readInstanceJson(response, action, notFoundHint) {
   const text = await response.text();
@@ -24095,7 +24131,7 @@ function oidcTokens(getIdToken, logger, now) {
   };
 }
 
-// src/credentials.ts
+// src/variables.ts
 var RESERVED_NAME = /^(GITHUB_|RUNNER_|ACTIONS_|CLOUDFLARE_)|^CI$/;
 var VALID_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 function mask(logger, value) {
@@ -24104,6 +24140,151 @@ function mask(logger, value) {
   if (!value.includes("\n")) return;
   for (const line of value.split(/\r?\n/)) if (line.trim() !== "") logger.setSecret(line);
 }
+function exportBuildVariables(variables, logger, exportVariable2) {
+  const exported = [];
+  for (const [name, value] of Object.entries(variables)) {
+    if (!VALID_NAME.test(name) || RESERVED_NAME.test(name)) {
+      logger.warning(`Skipped the build variable "${name.replace(/[^\w-]/g, "?")}": not a name the build can use.`);
+      continue;
+    }
+    exportVariable2(name, value);
+    exported.push(name);
+  }
+  logger.info(
+    exported.length === 0 ? "No build variables set in bohr." : `${plural(exported.length, "build variable")} for the next steps: ${exported.join(", ")}.`
+  );
+  return exported;
+}
+
+// src/build-plan.ts
+var MAX_PLAN_BYTES = 2 * 1024 * 1024;
+function invalidPlanPath(path) {
+  if (path.length === 0 || path.length > 256) return "must be 1 to 256 characters";
+  if (/[\p{Cc}\\:]/u.test(path)) return "has a control character, a backslash or a colon";
+  if (path.startsWith("/")) return "must be relative to the repository root";
+  const segments = path.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return 'has an empty, "." or ".." segment';
+  }
+  if (segments[0]?.toLowerCase() === ".github" || segments.some((segment) => segment.toLowerCase() === ".git")) {
+    return "is inside .github or .git";
+  }
+  return null;
+}
+function planOwns(path) {
+  const segments = path.split("/");
+  const name = segments[segments.length - 1];
+  return name === "wrangler.jsonc" || name === "lambda-adapter.mjs" || segments.slice(0, -1).includes(".bohr");
+}
+async function existing(workspace, path) {
+  const segments = path.split("/");
+  for (let index = 1; index <= segments.length; index++) {
+    const target = join4(workspace, ...segments.slice(0, index));
+    let stats;
+    try {
+      stats = await lstat2(target);
+    } catch {
+      return null;
+    }
+    if (stats.isSymbolicLink())
+      throw new Error(
+        `Cannot write ${printable(path)}: ${printable(segments.slice(0, index).join("/"))} is a symbolic link.`
+      );
+    if (index < segments.length && !stats.isDirectory()) {
+      throw new Error(
+        `Cannot write ${printable(path)}: ${printable(segments.slice(0, index).join("/"))} is not a folder.`
+      );
+    }
+    if (index === segments.length) {
+      if (!stats.isFile()) throw new Error(`Cannot write ${printable(path)}: it exists and is not a file.`);
+      return readFile4(target, "utf8");
+    }
+  }
+  return null;
+}
+async function writePlanFiles(workspace, files, logger) {
+  let total = 0;
+  const planned = [];
+  for (const [path, content] of Object.entries(files)) {
+    const problem = invalidPlanPath(path);
+    if (problem !== null) throw new Error(`The build plan has an invalid file path "${printable(path)}": ${problem}.`);
+    total += Buffer.byteLength(content, "utf8");
+    const current = await existing(workspace, path);
+    if (current === null) planned.push({ path, content, status: "written" });
+    else if (current === content) planned.push({ path, content, status: "unchanged" });
+    else if (planOwns(path)) planned.push({ path, content, status: "replaced" });
+    else {
+      throw new Error(
+        `The repository already has ${printable(path)} with other contents, and the build plan only replaces wrangler.jsonc, lambda-adapter.mjs and files in .bohr. Remove the file from the repository or from the plan.`
+      );
+    }
+  }
+  if (total > MAX_PLAN_BYTES) throw new Error(`The build plan's files exceed ${formatBytes(MAX_PLAN_BYTES)}.`);
+  for (const file of planned) {
+    const shown = printable(file.path);
+    if (file.status === "unchanged") {
+      logger.info(`${shown}: already in the repository.`);
+      continue;
+    }
+    const target = join4(workspace, ...file.path.split("/"));
+    await mkdir2(join4(target, ".."), { recursive: true });
+    await writeFile2(target, file.content);
+    if (file.status === "replaced") {
+      logger.warning(`${shown}: the repository's copy differs from the build plan's; using the build plan's.`);
+    } else {
+      logger.info(`${shown}: written (${formatBytes(Buffer.byteLength(file.content, "utf8"))}).`);
+    }
+  }
+  return planned.map(({ path, status }) => ({ path, status }));
+}
+async function prepareBuildPlan(options, deps) {
+  const { logger } = deps;
+  const instanceUrl = normalizeInstanceUrl(options.instanceUrl);
+  const idToken = oidcTokens(deps.getIdToken, logger, deps.now ?? Date.now);
+  const plan = await logger.group("Request the build plan", async () => {
+    let token;
+    try {
+      token = await idToken();
+    } catch (error2) {
+      logger.warning(`${errorMessage(error2)} Continuing without a build plan.`);
+      return null;
+    }
+    const answer = await requestBuildPlan({
+      instanceUrl,
+      token,
+      fetch: deps.fetch,
+      sleep: deps.sleep,
+      log: (message) => logger.info(message)
+    });
+    if (answer === null) {
+      logger.info(`${instanceUrl} has no build plan for this repository.`);
+      return null;
+    }
+    for (const value of Object.values(answer.buildVariables)) mask(logger, value);
+    logger.info(
+      `Got the build plan from ${instanceUrl}: Node.js ${printable(answer.nodeVersion)}, ${plural(Object.keys(answer.files).length, "file")}.`
+    );
+    return answer;
+  });
+  if (plan === null) {
+    deps.setOutput("found", "false");
+    return { found: false };
+  }
+  const files = await logger.group(
+    "Write the build plan files",
+    () => writePlanFiles(options.workspace, plan.files, logger)
+  );
+  const variables = exportBuildVariables(plan.buildVariables, logger, deps.exportVariable);
+  logger.info(`Install: ${plan.install === null ? "none" : printable(plan.install)}`);
+  logger.info(`Build: ${plan.build === null ? "none" : printable(plan.build)}`);
+  deps.setOutput("found", "true");
+  deps.setOutput("node-version", plan.nodeVersion);
+  deps.setOutput("install", plan.install ?? "");
+  deps.setOutput("build", plan.build ?? "");
+  return { found: true, files, variables };
+}
+
+// src/credentials.ts
 async function credentials(options, deps) {
   const { logger } = deps;
   const instanceUrl = normalizeInstanceUrl(options.instanceUrl);
@@ -24125,18 +24306,7 @@ async function credentials(options, deps) {
   });
   deps.setOutput("cloudflare-api-token", result.apiToken);
   deps.setOutput("cloudflare-account-id", result.accountId);
-  const variables = [];
-  for (const [name, value] of Object.entries(result.buildVariables)) {
-    if (!VALID_NAME.test(name) || RESERVED_NAME.test(name)) {
-      logger.warning(`Skipped the build variable "${name.replace(/[^\w-]/g, "?")}": not a name the build can use.`);
-      continue;
-    }
-    deps.exportVariable(name, value);
-    variables.push(name);
-  }
-  logger.info(
-    variables.length === 0 ? "No build variables set in bohr." : `${plural(variables.length, "build variable")} for the next steps: ${variables.join(", ")}.`
-  );
+  const variables = exportBuildVariables(result.buildVariables, logger, deps.exportVariable);
   return { accountId: result.accountId, variables };
 }
 
@@ -24144,7 +24314,27 @@ async function credentials(options, deps) {
 var DEFAULT_INSTANCE_URL = "https://app.bohr.io";
 async function run() {
   try {
-    if (getInput("credentials").trim().toLowerCase() === "true") {
+    const credentialsMode = getInput("credentials").trim().toLowerCase() === "true";
+    if (getInput("build-plan").trim().toLowerCase() === "true") {
+      if (credentialsMode) throw new Error("Set either credentials or build-plan, not both.");
+      const phase = getInput("phase").trim().toLowerCase() || "prepare";
+      if (phase !== "prepare") throw new Error(`Unknown phase "${phase}": build-plan only has the "prepare" phase.`);
+      await prepareBuildPlan(
+        {
+          instanceUrl: getInput("instance-url") || DEFAULT_INSTANCE_URL,
+          workspace: resolve2(process.env.GITHUB_WORKSPACE || ".")
+        },
+        {
+          fetch: globalThis.fetch,
+          getIdToken: () => getIDToken(OIDC_AUDIENCE),
+          logger: { info, warning, setSecret, group },
+          exportVariable,
+          setOutput
+        }
+      );
+      return;
+    }
+    if (credentialsMode) {
       await credentials(
         { instanceUrl: getInput("instance-url") || DEFAULT_INSTANCE_URL },
         {

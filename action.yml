@@ -21,6 +21,18 @@ inputs:
       step's outputs) and deploy nothing.
     required: false
     default: "false"
+  build-plan:
+    description: >-
+      "true" for a project bohr hosts whose repository keeps bohr v1's workflow (bohr-io/action): ask bohr for
+      the project's build plan and deploy nothing. Without one, the output found is "false" and nothing else
+      happens. With one, the plan's files are written into the workspace, the build variables go to the
+      environment of the next steps (masked) and the outputs found, node-version, install and build are set.
+    required: false
+    default: "false"
+  phase:
+    description: With build-plan "true", the step to run. Only "prepare" exists.
+    required: false
+    default: prepare
 
 outputs:
   url:
@@ -31,6 +43,14 @@ outputs:
     description: With credentials "true", the Cloudflare API token to deploy with (masked).
   cloudflare-account-id:
     description: With credentials "true", the Cloudflare account to deploy to (masked).
+  found:
+    description: With build-plan "true", "true" when bohr has a build plan for this repository, else "false".
+  node-version:
+    description: With build-plan "true", the Node.js version to set up (actions/setup-node's node-version).
+  install:
+    description: With build-plan "true", the install command (empty for none).
+  build:
+    description: With build-plan "true", the build command (empty for none).
 
 runs:
   using: node24

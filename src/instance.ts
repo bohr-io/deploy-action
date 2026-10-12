@@ -184,13 +184,60 @@ export async function requestDeployCredentials(client: InstanceClient): Promise<
   const { accountId, apiToken, buildVariables } = body;
   if (typeof accountId !== 'string' || accountId === '') throw malformed('accountId');
   if (typeof apiToken !== 'string' || apiToken === '') throw malformed('apiToken');
-  if (
-    buildVariables !== undefined &&
-    !(isRecord(buildVariables) && Object.values(buildVariables).every((value) => typeof value === 'string'))
-  ) {
-    throw malformed('buildVariables');
-  }
+  if (buildVariables !== undefined && !isStringRecord(buildVariables)) throw malformed('buildVariables');
   return { accountId, apiToken, buildVariables: (buildVariables as Record<string, string> | undefined) ?? {} };
+}
+
+/** What POST /api/deploy/build-plan answers for a project bohr hosts that keeps bohr v1's workflow. */
+export interface BuildPlan {
+  nodeVersion: string;
+  /** Null: no install step. */
+  install: string | null;
+  /** Null: no build step. */
+  build: string | null;
+  /** Files to write into the workspace, by path relative to the repository root. */
+  files: Record<string, string>;
+  /** The pushed branch's build variables, by name. */
+  buildVariables: Record<string, string>;
+}
+
+/**
+ * POST /api/deploy/build-plan: the build plan of this repository's project, or null when the instance has
+ * none (404 or `found: false`: the repository is not a project bohr hosts, or has no plan).
+ */
+export async function requestBuildPlan(client: InstanceClient): Promise<BuildPlan | null> {
+  const response = await fetchWithRetry(
+    `${client.instanceUrl}/api/deploy/build-plan`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${client.token}`, 'User-Agent': USER_AGENT },
+    },
+    { fetch: client.fetch, sleep: client.sleep, onRetry: client.log },
+  );
+  if (response.status === 404) {
+    await response.body?.cancel().catch(() => {});
+    return null;
+  }
+  const body = await readInstanceJson(response, 'give the build plan', UNKNOWN_PROJECT_HINT);
+  if (body.found === false) return null;
+  if (body.found !== true) throw malformed('found');
+  const { nodeVersion, install, build, files, buildVariables } = body;
+  if (typeof nodeVersion !== 'string' || nodeVersion === '') throw malformed('nodeVersion');
+  if (install !== null && install !== undefined && typeof install !== 'string') throw malformed('install');
+  if (build !== null && build !== undefined && typeof build !== 'string') throw malformed('build');
+  if (files !== undefined && !isStringRecord(files)) throw malformed('files');
+  if (buildVariables !== undefined && !isStringRecord(buildVariables)) throw malformed('buildVariables');
+  return {
+    nodeVersion,
+    install: install || null,
+    build: build || null,
+    files: (files as Record<string, string> | undefined) ?? {},
+    buildVariables: (buildVariables as Record<string, string> | undefined) ?? {},
+  };
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === 'string');
 }
 
 /** Parses a JSON object response, turning errors (JSON `{ error }` bodies) into actionable messages. */

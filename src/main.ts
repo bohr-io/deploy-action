@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import * as core from '@actions/core';
+import { prepareBuildPlan } from './build-plan';
 import { credentials } from './credentials';
 import { type DeployResult, deploy, OIDC_AUDIENCE } from './deploy';
 import { formatBytes } from './log';
@@ -9,7 +10,27 @@ const DEFAULT_INSTANCE_URL = 'https://app.bohr.io';
 /** Action entry point: reads inputs, deploys (or only gets the credentials), sets outputs and the job summary. */
 export async function run(): Promise<void> {
   try {
-    if (core.getInput('credentials').trim().toLowerCase() === 'true') {
+    const credentialsMode = core.getInput('credentials').trim().toLowerCase() === 'true';
+    if (core.getInput('build-plan').trim().toLowerCase() === 'true') {
+      if (credentialsMode) throw new Error('Set either credentials or build-plan, not both.');
+      const phase = core.getInput('phase').trim().toLowerCase() || 'prepare';
+      if (phase !== 'prepare') throw new Error(`Unknown phase "${phase}": build-plan only has the "prepare" phase.`);
+      await prepareBuildPlan(
+        {
+          instanceUrl: core.getInput('instance-url') || DEFAULT_INSTANCE_URL,
+          workspace: resolve(process.env.GITHUB_WORKSPACE || '.'),
+        },
+        {
+          fetch: globalThis.fetch,
+          getIdToken: () => core.getIDToken(OIDC_AUDIENCE),
+          logger: { info: core.info, warning: core.warning, setSecret: core.setSecret, group: core.group },
+          exportVariable: core.exportVariable,
+          setOutput: core.setOutput,
+        },
+      );
+      return;
+    }
+    if (credentialsMode) {
       await credentials(
         { instanceUrl: core.getInput('instance-url') || DEFAULT_INSTANCE_URL },
         {

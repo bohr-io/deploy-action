@@ -62,6 +62,47 @@ With `credentials: "true"` the action deploys nothing. It requests an OIDC token
 
 bohr answers only runs of `.github/workflows/bohr-deploy.yml` on a `push` (or `workflow_dispatch`) to the project's production branch, for a project in its owner's Cloudflare account. It hands out the owner's own token (the user's or the organization's Cloudflare connection), never the token of bohr's account: projects bohr hosts are refused.
 
+## Build plan mode (projects migrated from bohr v1)
+
+Repositories migrated from bohr v1 keep their workflow (`.github/workflows/bohr.yml`, running `bohr-io/action@main` on `push` and `repository_dispatch`); bohr writes nothing into them, neither files nor Actions secrets. bohr-io/action asks bohr how to build the project, and runs this action twice: once with `build-plan: "true"` to prepare the build, then in its default mode to deploy. Its composite steps look like this:
+
+```yaml
+    - id: plan
+      uses: bohr-io/deploy-action@v1
+      with:
+        build-plan: "true"
+        phase: prepare
+    - if: steps.plan.outputs.found == 'true'
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ steps.plan.outputs.node-version }}
+    - if: steps.plan.outputs.found == 'true' && steps.plan.outputs.install != ''
+      shell: bash
+      env: { BOHR_INSTALL: "${{ steps.plan.outputs.install }}" }
+      run: eval "$BOHR_INSTALL"
+    - if: steps.plan.outputs.found == 'true' && steps.plan.outputs.build != ''
+      shell: bash
+      env: { BOHR_BUILD: "${{ steps.plan.outputs.build }}" }
+      run: eval "$BOHR_BUILD"
+    - if: steps.plan.outputs.found == 'true'
+      uses: bohr-io/deploy-action@v1
+    - if: steps.plan.outputs.found != 'true'
+      shell: bash
+      run: npx bohr@latest deploy   # bohr v1
+```
+
+(The commands go through `env`, not `${{ }}` inside `run`, so their text is never parsed as part of the script.)
+
+With `build-plan: "true"` the action deploys nothing. It requests an OIDC token (audience `bohr.io`) and calls `POST <instance-url>/api/deploy/build-plan` with it:
+
+- **No plan** (HTTP 404, or `found: false`: the repository is not a project bohr hosts, or its plan was not set up yet): the output `found` is `"false"` and nothing else happens; the step succeeds, and the caller decides what to do. A run that cannot get an OIDC token is treated the same way, with a warning.
+- **A plan**: every build variable value is masked (`::add-mask::`) and exported to the environment of the next steps (`$GITHUB_ENV`); the plan's files are written into the workspace (`$GITHUB_WORKSPACE`, paths relative to the repository root); the outputs `found` (`"true"`), `node-version`, `install` and `build` are set. Setting up Node.js, installing and building are the caller's steps.
+- **Refused** (HTTP 403: a suspended project, a `pull_request` run, a tag): the step fails with bohr's reason.
+
+Plan files: paths must be relative, without `..`, and outside `.github` and `.git`. A file the repository does not have is written; an identical one is left alone. The plan replaces the repository's own copy only of the files it owns, `wrangler.jsonc`, `lambda-adapter.mjs` and anything in a `.bohr` folder, with a warning; any other file the repository has with other contents stops the step before anything is written. Symbolic links on the way are refused.
+
+`phase` only has `prepare` for now.
+
 ## Inputs
 
 | Input | Default | Description |
@@ -69,6 +110,8 @@ bohr answers only runs of `.github/workflows/bohr-deploy.yml` on a `push` (or `w
 | `instance-url` | `https://app.bohr.io` | Base URL of the bohr instance that manages the project. Must use https. |
 | `working-directory` | `.` | Folder that holds the project's `wrangler.jsonc`, relative to the repository root. |
 | `credentials` | `false` | `"true"`: only get the deploy credentials and build variables of a project in its owner's account (see above). |
+| `build-plan` | `false` | `"true"`: only prepare the build of a project migrated from bohr v1 (see [Build plan mode](#build-plan-mode-projects-migrated-from-bohr-v1)). |
+| `phase` | `prepare` | With `build-plan: "true"`: the step to run; only `prepare` exists. |
 
 ## Outputs
 
@@ -78,6 +121,10 @@ bohr answers only runs of `.github/workflows/bohr-deploy.yml` on a `push` (or `w
 | `deployment-id` | Identifier of the deployment on the bohr instance. |
 | `cloudflare-api-token` | Credentials mode: the Cloudflare API token to deploy with (masked). |
 | `cloudflare-account-id` | Credentials mode: the Cloudflare account to deploy to (masked). |
+| `found` | Build plan mode: `"true"` when bohr has a build plan for this repository, else `"false"`. |
+| `node-version` | Build plan mode: the Node.js version for `actions/setup-node`. |
+| `install` | Build plan mode: the install command (empty: none). |
+| `build` | Build plan mode: the build command (empty: none). |
 
 The job summary shows the URL and how many asset files were found and uploaded.
 
@@ -144,6 +191,8 @@ New and changed files go straight to Cloudflare with an upload token that only a
 | `Could not get a GitHub OIDC token` | Add `permissions: id-token: write` to the workflow or the job. Workflows triggered from forks never get OIDC tokens. |
 | `No bohr.io Cloud managed project matches this repository and branch` | Create or migrate the project in the bohr panel, and deploy on branch pushes (not tags or pull requests). |
 | `could not give the deploy credentials (HTTP 403)` | Credentials mode: the message says why. Only `bohr-deploy.yml` on a push to the production branch of a project in its owner's Cloudflare account gets them. |
+| `could not give the build plan (HTTP 403)` | Build plan mode: the message says why (a suspended project, or a run that is not a push, `workflow_dispatch` or `repository_dispatch` to a branch). |
+| `The repository already has <file> with other contents` | Build plan mode: the plan would overwrite a file the repository has; remove it from the repository or from the plan. |
 | `Found wrangler.toml, but this action reads wrangler.jsonc` | Convert the config to `wrangler.jsonc`. |
 | `... is not supported` | Remove the binding from the config; managed projects support static assets, vars and secrets. |
 | `The assets directory ... does not exist` | Run the build before the action, or fix `assets.directory`. |
