@@ -9,7 +9,8 @@ export const MAX_ASSET_SIZE = 25 * 1024 * 1024;
 export const ASSETS_IGNORE_FILE = '.assetsignore';
 
 /** Files wrangler never uploads as assets: the ignore file and the routing metafiles. */
-const DEFAULT_IGNORES = [`/${ASSETS_IGNORE_FILE}`, '/_redirects', '/_headers'];
+// A repository's git data (a static site deployed from the repository root) is never published, at any depth
+const DEFAULT_IGNORES = [`/${ASSETS_IGNORE_FILE}`, '/_redirects', '/_headers', '.git'];
 /** A Cloudflare Pages advanced-mode Worker; deploying it as an asset would publish server code. */
 const PAGES_WORKER = '_worker.js';
 

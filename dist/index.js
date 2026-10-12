@@ -23725,7 +23725,7 @@ function escapeRegex(text) {
 // src/manifest.ts
 var MAX_ASSET_SIZE = 25 * 1024 * 1024;
 var ASSETS_IGNORE_FILE = ".assetsignore";
-var DEFAULT_IGNORES = [`/${ASSETS_IGNORE_FILE}`, "/_redirects", "/_headers"];
+var DEFAULT_IGNORES = [`/${ASSETS_IGNORE_FILE}`, "/_redirects", "/_headers", ".git"];
 var PAGES_WORKER = "_worker.js";
 async function buildAssetManifest(directory, options = {}) {
   const maxAssetSize = options.maxAssetSize ?? MAX_ASSET_SIZE;
