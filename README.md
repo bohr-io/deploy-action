@@ -2,6 +2,8 @@
 
 Deploys a bohr.io Cloud managed project (a Cloudflare Worker, static assets, or both) from GitHub Actions. The project runs in bohr's Cloudflare account, so the workflow needs no Cloudflare token: the action signs in to bohr with the workflow's GitHub OIDC token.
 
+The action is a thin wrapper around the bohr CLI ([npm `bohr`](../../packages/cli/README.md)): every run executes the latest release, `npx --yes bohr@latest action`, with the npm of the Node.js that runs the action. The CLI reads the inputs below and sets the outputs, the environment of the next steps, the masks and the job summary itself. The same CLI deploys from a terminal or an AI agent (`npx bohr deploy`).
+
 ## Usage
 
 ```yaml
@@ -96,8 +98,15 @@ Repositories migrated from bohr v1 keep their workflow (`.github/workflows/bohr.
 With `build-plan: "true"` the action deploys nothing. It requests an OIDC token (audience `bohr.io`) and calls `POST <instance-url>/api/deploy/build-plan` with it:
 
 - **No plan** (HTTP 404, or `found: false`: the repository is not a project bohr hosts, or its plan was not set up yet): the output `found` is `"false"` and nothing else happens; the step succeeds, and the caller decides what to do. A run that cannot get an OIDC token is treated the same way, with a warning.
-- **A plan**: every build variable value is masked (`::add-mask::`) and exported to the environment of the next steps (`$GITHUB_ENV`); the plan's files are written into the workspace (`$GITHUB_WORKSPACE`, paths relative to the repository root); the outputs `found` (`"true"`), `node-version`, `install` and `build` are set. Setting up Node.js, installing and building are the caller's steps.
+- **A plan**: every build variable value is masked (`::add-mask::`) and exported to the environment of the next steps (`$GITHUB_ENV`); the plan's files are written into the workspace (`$GITHUB_WORKSPACE`, paths relative to the repository root); `BOHR_V1_ASSETS=true` is exported too (see below); the outputs `found` (`"true"`), `node-version`, `install` and `build` are set. Setting up Node.js, installing and building are the caller's steps.
 - **Refused** (HTTP 403: a suspended project, a `pull_request` run, a tag): the step fails with bohr's reason.
+
+**Assets as bohr v1 published them.** With `BOHR_V1_ASSETS=true` (set by the prepare step, so only for projects migrated from v1 in that same job), the deploy step publishes the assets the way bohr v1's CLI did, so migrated sites keep behaving as before:
+
+- it leaves out what v1 never published, by path from the assets directory, ignoring case: anything in a `.git/`, `.github/`, `.worker/`, `.turbo/`, `node_modules/` or `turborepo-cache/` folder; anything under `/api/` or `/dist-api/` at the root; files ending in `.env`, `/package.json`, `/package-lock.json`, `/yarn.lock`, `/.yarnrc`, `/.gitignore` or `next.conf.js`. (v1 also listed `README.md`, but compared it with a lowercased path, so it published README files; they are still published.)
+- it skips files of 24 MiB or more with a warning, as v1 did ("too big"), instead of failing the deploy on Cloudflare's 25 MiB limit.
+
+Other projects keep failing on a file over 25 MiB.
 
 Plan files: paths must be relative, without `..`, and outside `.github` and `.git`. A file the repository does not have is written; an identical one is left alone. The plan replaces the repository's own copy only of the files it owns, `wrangler.jsonc`, `lambda-adapter.mjs` and anything in a `.bohr` folder, with a warning; any other file the repository has with other contents stops the step before anything is written. Symbolic links on the way are refused.
 
@@ -179,6 +188,7 @@ Files in `assets.directory` are hashed exactly as wrangler hashes them, so files
 
 - skips files matched by a `.assetsignore` file at the root of the assets directory (gitignore syntax, as in wrangler);
 - skips `.assetsignore`, a root `_worker.js` (Pages server code) and symbolic links;
+- never publishes git data or environment files: anything named `.git`, `.env` or `.env.<name>` (`.env.production`…), file or folder, at any depth, whatever `.assetsignore` says (a warning names each skipped `.env`);
 - sends `_redirects` and `_headers` at the root (up to 256 KiB each) as routing rules instead of files, as wrangler does;
 - fails on files larger than 25 MiB, the Cloudflare limit.
 
@@ -199,10 +209,12 @@ New and changed files go straight to Cloudflare with an upload token that only a
 
 ## Development
 
+The deploy code lives in the CLI, `packages/cli` (`src/action.ts` is this action's entry). This folder only holds `action.yml` and the wrapper (`src/main.ts`) that starts the CLI:
+
 ```sh
 pnpm --filter @bohr/deploy-action test
 pnpm --filter @bohr/deploy-action typecheck
 pnpm --filter @bohr/deploy-action build
 ```
 
-GitHub runs `dist/index.js` straight from the repository, so the bundle is committed: rebuild it after changing `src/`. The protocol between the action and the instance is described in [docs/managed-hosting.md](../../docs/managed-hosting.md).
+GitHub runs `dist/index.js` straight from the repository, so the bundle is committed: rebuild it after changing `src/`. A change to the deploy itself is a CLI release (CONTRIBUTING.md), which every run picks up. To try a release before it becomes `latest`, set `BOHR_CLI_PACKAGE` in the step's `env` to another package spec (`bohr@2.0.1`, or a tarball). The protocol between the CLI and the instance is described in [docs/managed-hosting.md](../../docs/managed-hosting.md).

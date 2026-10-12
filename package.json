@@ -1,20 +1,14 @@
 {
   "name": "@bohr/deploy-action",
-  "version": "1.0.5",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "GitHub Action that deploys a bohr.io Cloud managed project.",
+  "description": "GitHub Action that deploys a bohr.io Cloud managed project: a wrapper that runs the latest bohr CLI (packages/cli).",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --main-fields=module,main --banner:js=\"import { createRequire as __bohrCreateRequire } from 'node:module'; const require = __bohrCreateRequire(import.meta.url);\" --legal-comments=none --metafile=dist/meta.json --outfile=dist/index.js && node scripts/licenses.mjs dist/meta.json",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --legal-comments=none --outfile=dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
-  },
-  "dependencies": {
-    "@actions/core": "3.0.1",
-    "@noble/hashes": "2.4.0",
-    "jsonc-parser": "3.3.1",
-    "mime": "4.1.0"
   },
   "devDependencies": {
     "@types/node": "26.6.5",
