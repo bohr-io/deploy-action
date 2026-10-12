@@ -58,5 +58,3 @@ runs:
   using: node24
   main: dist/index.js
 
-  live:
-    description: build-plan mode. "true" when the project's production address already moved to bohr.io v2 (a failed deploy must not fall back to bohr v1).
