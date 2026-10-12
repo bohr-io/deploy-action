@@ -187,5 +187,6 @@ export async function prepareBuildPlan(
   deps.setOutput('node-version', plan.nodeVersion);
   deps.setOutput('install', plan.install ?? '');
   deps.setOutput('build', plan.build ?? '');
+  deps.setOutput('live', plan.live ? 'true' : 'false');
   return { found: true, files, variables };
 }

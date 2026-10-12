@@ -51,7 +51,12 @@ outputs:
     description: With build-plan "true", the install command (empty for none).
   build:
     description: With build-plan "true", the build command (empty for none).
+  live:
+    description: With build-plan "true", "true" when the project's production address already moved to bohr.io v2 (a failed v2 deploy must then fail instead of falling back to bohr v1).
 
 runs:
   using: node24
   main: dist/index.js
+
+  live:
+    description: build-plan mode. "true" when the project's production address already moved to bohr.io v2 (a failed deploy must not fall back to bohr v1).

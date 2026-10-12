@@ -21836,7 +21836,7 @@ async function requestBuildPlan(client) {
   const body = await readInstanceJson(response, "give the build plan", UNKNOWN_PROJECT_HINT);
   if (body.found === false) return null;
   if (body.found !== true) throw malformed("found");
-  const { nodeVersion, install, build, files, buildVariables } = body;
+  const { nodeVersion, install, build, files, buildVariables, live } = body;
   if (typeof nodeVersion !== "string" || nodeVersion === "") throw malformed("nodeVersion");
   if (install !== null && install !== void 0 && typeof install !== "string") throw malformed("install");
   if (build !== null && build !== void 0 && typeof build !== "string") throw malformed("build");
@@ -21847,7 +21847,8 @@ async function requestBuildPlan(client) {
     install: install || null,
     build: build || null,
     files: files ?? {},
-    buildVariables: buildVariables ?? {}
+    buildVariables: buildVariables ?? {},
+    live: live === true
   };
 }
 function isStringRecord(value) {
@@ -24281,6 +24282,7 @@ async function prepareBuildPlan(options, deps) {
   deps.setOutput("node-version", plan.nodeVersion);
   deps.setOutput("install", plan.install ?? "");
   deps.setOutput("build", plan.build ?? "");
+  deps.setOutput("live", plan.live ? "true" : "false");
   return { found: true, files, variables };
 }
 

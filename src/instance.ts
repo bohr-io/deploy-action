@@ -199,6 +199,8 @@ export interface BuildPlan {
   files: Record<string, string>;
   /** The pushed branch's build variables, by name. */
   buildVariables: Record<string, string>;
+  /** The production address already moved to bohr.io v2: a failed deploy fails, it does not fall back to v1. */
+  live: boolean;
 }
 
 /**
@@ -221,7 +223,7 @@ export async function requestBuildPlan(client: InstanceClient): Promise<BuildPla
   const body = await readInstanceJson(response, 'give the build plan', UNKNOWN_PROJECT_HINT);
   if (body.found === false) return null;
   if (body.found !== true) throw malformed('found');
-  const { nodeVersion, install, build, files, buildVariables } = body;
+  const { nodeVersion, install, build, files, buildVariables, live } = body;
   if (typeof nodeVersion !== 'string' || nodeVersion === '') throw malformed('nodeVersion');
   if (install !== null && install !== undefined && typeof install !== 'string') throw malformed('install');
   if (build !== null && build !== undefined && typeof build !== 'string') throw malformed('build');
@@ -233,6 +235,7 @@ export async function requestBuildPlan(client: InstanceClient): Promise<BuildPla
     build: build || null,
     files: (files as Record<string, string> | undefined) ?? {},
     buildVariables: (buildVariables as Record<string, string> | undefined) ?? {},
+    live: live === true,
   };
 }
 
